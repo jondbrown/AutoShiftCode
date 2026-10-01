@@ -11,7 +11,17 @@ Handled codes are recorded in `redeemed.json` so each is only attempted once.
 The code list defaults to the mentalmars.com Borderlands 4 page; use `--source-url <page>`
 to read a different page that lists codes in table rows.
 
-## Setup
+## Using the packaged .exe (Windows)
+Download `AutoShiftKey.exe` from the Releases page and double-click it (Windows SmartScreen
+may warn because the exe is unsigned: More info, then Run anyway). Needs Microsoft Edge,
+which ships with Windows. In the menu: **1** sign in to SHiFT once, **3** preview new codes,
+**2** redeem now, **4** schedule a daily run. Data and logs live in
+`%LOCALAPPDATA%\AutoShiftKey`.
+
+Build it yourself with `powershell -ExecutionPolicy Bypass -File build_exe.ps1`
+(output: `dist\AutoShiftKey.exe`).
+
+## Setup (from source)
 ```powershell
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt

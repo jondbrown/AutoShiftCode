@@ -2,11 +2,15 @@
 
   python autoshift.py --login      one-time: sign in manually, session is saved
   python autoshift.py --dry-run    list new codes without redeeming
-  python autoshift.py              redeem new codes (headless; use --headed to watch)
+  python autoshift.py --run        redeem new codes (headless; use --headed to watch)
+  python autoshift.py --schedule   register a daily Windows scheduled task
+  AutoShiftKey.exe                 (packaged build) opens an interactive menu
 """
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
 import time
 from datetime import date, datetime
@@ -15,7 +19,12 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-ROOT = Path(__file__).parent
+FROZEN = getattr(sys, "frozen", False)  # running as a PyInstaller .exe
+# The .exe keeps its data per user; running from source keeps it beside the script.
+ROOT = (Path(os.environ.get("LOCALAPPDATA", Path.home())) / "AutoShiftKey") if FROZEN \
+    else Path(__file__).parent
+ROOT.mkdir(parents=True, exist_ok=True)
+TASK_NAME = "AutoShiftKey"
 STATE_FILE = ROOT / "redeemed.json"
 PROFILE_DIR = ROOT / "browser_profile"
 LOG_DIR = ROOT / "logs"
@@ -123,6 +132,92 @@ RESULT_TEXT_RE = (r".*(?:has expired|already been redeemed|already redeemed|not 
 KEYRING_SERVICE = "AutoShiftKey"
 
 
+def launch(p, headless):
+    """Open the persistent browser profile in the system's Microsoft Edge.
+
+    Edge ships with Windows, so nothing has to be downloaded or bundled. From source
+    without Edge, fall back to Playwright's own Chromium.
+    """
+    try:
+        return p.chromium.launch_persistent_context(str(PROFILE_DIR), channel="msedge",
+                                                    headless=headless)
+    except Exception:  # noqa: BLE001
+        if FROZEN:
+            raise
+        return p.chromium.launch_persistent_context(str(PROFILE_DIR), headless=headless)
+
+
+def command_line(*flags):
+    """Command (as a list) that re-runs this program with the given flags."""
+    base = [sys.executable] if FROZEN else [sys.executable, str(Path(__file__).resolve())]
+    return base + list(flags)
+
+
+def schedule_daily(at="09:00"):
+    """Register a daily task that runs while this user is logged on."""
+    tr = subprocess.list2cmdline(command_line("--run"))
+    r = subprocess.run(["schtasks", "/Create", "/F", "/SC", "DAILY", "/ST", at,
+                        "/TN", TASK_NAME, "/TR", tr], capture_output=True, text=True)
+    print(r.stdout.strip() or r.stderr.strip())
+    return r.returncode
+
+
+def unschedule():
+    r = subprocess.run(["schtasks", "/Delete", "/F", "/TN", TASK_NAME],
+                       capture_output=True, text=True)
+    print(r.stdout.strip() or r.stderr.strip())
+    return r.returncode
+
+
+def set_credentials():
+    import getpass
+    import keyring
+    email = input("SHiFT email: ").strip()
+    keyring.set_password(KEYRING_SERVICE, "email", email)
+    keyring.set_password(KEYRING_SERVICE, email, getpass.getpass("SHiFT password: "))
+    print("Saved to Windows Credential Manager.")
+
+
+def manual_login():
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        ctx = launch(p, headless=False)
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto("https://shift.gearboxsoftware.com/home")
+        input("Sign in in the browser window, then press Enter here to save and exit...")
+        ctx.close()
+
+
+def menu():
+    """Interactive menu for the packaged build."""
+    actions = {
+        "1": ("Sign in to SHiFT (do this first)", manual_login),
+        "2": ("Redeem new codes now", lambda: run(argparse.Namespace(
+            source_url=DEFAULT_SOURCE_URL, dry_run=False, headed=True))),
+        "3": ("Show new codes without redeeming", lambda: run(argparse.Namespace(
+            source_url=DEFAULT_SOURCE_URL, dry_run=True, headed=False))),
+        "4": ("Schedule a daily run (9:00 AM)", schedule_daily),
+        "5": ("Remove the daily schedule", unschedule),
+        "6": ("Store password for automatic sign-in (optional)", set_credentials),
+        "q": ("Quit", None),
+    }
+    while True:
+        print()
+        print("AutoShiftKey - unofficial tool, use at your own risk")
+        for k, (label, _) in actions.items():
+            print(f"  {k}) {label}")
+        choice = input("> ").strip().lower()
+        if choice == "q":
+            return 0
+        if choice in actions:
+            try:
+                actions[choice][1]()
+            except Exception as e:  # noqa: BLE001
+                print(f"Failed: {e}")
+        else:
+            print("Pick one of the listed options.")
+
+
 def auto_login(page):
     """Try one automatic sign-in with credentials from Windows Credential Manager.
 
@@ -142,14 +237,17 @@ def auto_login(page):
         log("No stored credentials. Run: python autoshift.py --set-credentials")
         return False
     log("Session expired; attempting automatic sign-in.")
-    page.goto("https://shift.gearboxsoftware.com/home")
-    page.locator("input[type=email], #user_email").first.fill(email)
-    page.locator("input[type=password], #user_password").first.fill(password)
-    page.locator("input[type=submit], button[type=submit]").first.click()
-    page.wait_for_load_state("networkidle")
-    if logged_in(page):
-        log("Automatic sign-in succeeded.")
-        return True
+    try:
+        page.goto("https://shift.gearboxsoftware.com/home")
+        page.locator("input[type=email], #user_email").first.fill(email, timeout=10000)
+        page.locator("input[type=password], #user_password").first.fill(password, timeout=10000)
+        page.locator("input[type=submit], button[type=submit]").first.click()
+        page.wait_for_load_state("networkidle")
+        if logged_in(page):
+            log("Automatic sign-in succeeded.")
+            return True
+    except Exception as e:  # noqa: BLE001
+        log(f"Automatic sign-in error at {page.url!r} (title {page.title()!r}): {str(e)[:120]}")
     log("Automatic sign-in failed (wrong password, captcha or 2FA?). Run --login manually.")
     return False
 
@@ -221,36 +319,7 @@ def redeem_code(page, code, done):
     return "unknown", "too many redeem buttons"
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--login", action="store_true", help="sign in manually and save the session")
-    ap.add_argument("--set-credentials", action="store_true",
-                    help="store SHiFT email/password in Windows Credential Manager")
-    ap.add_argument("--source-url", default=DEFAULT_SOURCE_URL,
-                    help="page listing SHiFT codes (default: mentalmars.com Borderlands 4 page)")
-    ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--headed", action="store_true")
-    args = ap.parse_args()
-
-    if args.set_credentials:
-        import getpass
-        import keyring
-        email = input("SHiFT email: ").strip()
-        keyring.set_password(KEYRING_SERVICE, "email", email)
-        keyring.set_password(KEYRING_SERVICE, email, getpass.getpass("SHiFT password: "))
-        print("Saved to Windows Credential Manager.")
-        return 0
-
-    if args.login:
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            ctx = p.chromium.launch_persistent_context(str(PROFILE_DIR), headless=False)
-            page = ctx.pages[0] if ctx.pages else ctx.new_page()
-            page.goto("https://shift.gearboxsoftware.com/home")
-            input("Sign in in the browser window, then press Enter here to save and exit...")
-            ctx.close()
-        return 0
-
+def run(args):
     codes = scrape(args.source_url)
     state = load_state()
     todo = pending(codes, state)
@@ -262,10 +331,10 @@ def main():
 
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(str(PROFILE_DIR), headless=not args.headed)
+        ctx = launch(p, headless=not args.headed)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         if not logged_in(page) and not auto_login(page):
-            log("Not logged in. Run: python autoshift.py --login")
+            log("Not logged in. Choose 'Sign in to SHiFT' in the menu (or run with --login).")
             ctx.close()
             return 2
         for code, info in todo.items():
@@ -285,6 +354,35 @@ def main():
             time.sleep(5)
         ctx.close()
     return 0
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--run", action="store_true", help="redeem new codes (what the schedule runs)")
+    ap.add_argument("--login", action="store_true", help="sign in manually and save the session")
+    ap.add_argument("--set-credentials", action="store_true",
+                    help="store SHiFT email/password in Windows Credential Manager")
+    ap.add_argument("--schedule", action="store_true", help="register a daily scheduled task")
+    ap.add_argument("--unschedule", action="store_true", help="remove the daily scheduled task")
+    ap.add_argument("--source-url", default=DEFAULT_SOURCE_URL,
+                    help="page listing SHiFT codes (default: mentalmars.com Borderlands 4 page)")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--headed", action="store_true")
+    args = ap.parse_args()
+
+    if args.set_credentials:
+        set_credentials()
+        return 0
+    if args.login:
+        manual_login()
+        return 0
+    if args.schedule:
+        return schedule_daily()
+    if args.unschedule:
+        return unschedule()
+    if FROZEN and len(sys.argv) == 1:  # double-clicked .exe
+        return menu()
+    return run(args)
 
 
 if __name__ == "__main__":
