@@ -276,10 +276,17 @@ def auto_login(page):
 
 BUTTONS = "#code_results input[type=submit], #code_results button, .redeem_button"
 MAX_REDEEMS_PER_CODE = 10
+CHECK_INTERVAL = 5  # minimum seconds between two code checks (SHiFT throttles bursts)
+_last_check = 0.0
 
 
 def check_code(page, code):
     """Enter a code and return (alert_text, [(label, button_locator), ...])."""
+    global _last_check
+    wait = CHECK_INTERVAL - (time.monotonic() - _last_check)
+    if wait > 0:
+        time.sleep(wait)
+    _last_check = time.monotonic()
     page.goto(REWARDS_URL)
     page.locator("#shift_code_input").fill(code)
     page.locator("#shift_code_check").click()
@@ -320,7 +327,9 @@ def redeem_code(page, code, done):
                 "\n".join(clean(x, 400) for x in lines), encoding="utf-8")
         msg = alerts or msg
         st = classify(alerts) if alerts else "unknown"
-        if st == "blocked":
+        if st in ("blocked", "error"):
+            # An error on any check means the code's state is unknown: never record it as
+            # finished, even if some buttons were handled; the next run starts it over.
             return st, alerts[:200]
         if skip >= len(buttons):
             if buttons or done:
