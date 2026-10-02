@@ -200,13 +200,19 @@ def menu():
             source_url=DEFAULT_SOURCE_URL, dry_run=True, headed=False))),
         "4": ("Schedule a daily run (9:00 AM)", schedule_daily),
         "5": ("Remove the daily schedule", unschedule),
-        "6": ("Store password for automatic sign-in (optional)", set_credentials),
+        "6": ("Store password for automatic sign-in", set_credentials),
         "q": ("Quit", None),
     }
+    # A heading is printed above the option with the matching key.
+    headings = {"1": "Redeem codes", "4": "Automation (optional)", "q": ""}
     while True:
         print()
         print("AutoShiftKey - unofficial tool, use at your own risk")
         for k, (label, _) in actions.items():
+            if k in headings:
+                print()
+                if headings[k]:
+                    print(headings[k])
             print(f"  {k}) {label}")
         choice = input("> ").strip().lower()
         if choice == "q":
