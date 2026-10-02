@@ -1,4 +1,4 @@
-# AutoShiftKey
+# AutoShiftCode
 
 Scrapes Borderlands 4 SHiFT codes from mentalmars.com and redeems them on shift.gearboxsoftware.com.
 Handled codes are recorded in `redeemed.json` so each is only attempted once.
