@@ -33,12 +33,21 @@ REWARDS_URL = "https://shift.gearboxsoftware.com/rewards"
 CODE_RE = re.compile(r"\b[A-Z0-9]{5}(?:-[A-Z0-9]{5}){4}\b")
 TERMINAL = {"redeemed", "already_redeemed", "expired", "invalid"}
 
+MAX_PAGE_BYTES = 5_000_000  # source page size cap (the real page is ~0.5 MB)
+MAX_CODES_PER_RUN = 50      # a hostile/broken source can't make us hammer SHiFT
+
 _log_file = None
+
+
+def clean(text, limit=120):
+    """Untrusted text (from web pages): drop control characters, e.g. terminal escape
+    sequences, and cap the length before it is printed, logged or stored."""
+    return re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", str(text))[:limit]
 
 
 def log(msg):
     global _log_file
-    line = f"{datetime.now():%H:%M:%S} {msg}"
+    line = f"{datetime.now():%H:%M:%S} {clean(msg, 400)}"
     print(line, flush=True)
     if _log_file is None:
         LOG_DIR.mkdir(exist_ok=True)
@@ -59,10 +68,15 @@ def parse_date(text):
 
 def scrape(url=DEFAULT_SOURCE_URL):
     """Return {code: {reward, expires}} from every table row containing a code."""
-    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
-    resp.raise_for_status()
-    resp.encoding = "utf-8"
-    soup = BeautifulSoup(resp.text, "html.parser")
+    body = b""
+    with requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30,
+                      stream=True) as resp:
+        resp.raise_for_status()
+        for chunk in resp.iter_content(65536):
+            body += chunk
+            if len(body) > MAX_PAGE_BYTES:
+                raise ValueError(f"Source page larger than {MAX_PAGE_BYTES} bytes; refusing.")
+    soup = BeautifulSoup(body.decode("utf-8", errors="replace"), "html.parser")
     codes = {}
     for tr in soup.find_all("tr"):
         cells = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
@@ -70,8 +84,8 @@ def scrape(url=DEFAULT_SOURCE_URL):
         if not m:
             continue
         codes.setdefault(m.group(0), {
-            "reward": cells[0] if cells else "",
-            "expires": cells[-1] if len(cells) > 1 else "",
+            "reward": clean(cells[0]) if cells else "",
+            "expires": clean(cells[-1]) if len(cells) > 1 else "",
         })
     if not codes:  # table layout changed: fall back to any code in the page text
         for c in CODE_RE.findall(soup.get_text(" ")):
@@ -302,7 +316,8 @@ def redeem_code(page, code, done):
         if attempt == 0:
             LOG_DIR.mkdir(exist_ok=True)
             lines = [code, alerts] + [l for l, _ in buttons]
-            (LOG_DIR / "last_results.txt").write_text("\n".join(lines), encoding="utf-8")
+            (LOG_DIR / "last_results.txt").write_text(
+                "\n".join(clean(x, 400) for x in lines), encoding="utf-8")
         msg = alerts or msg
         st = classify(alerts) if alerts else "unknown"
         if st == "blocked":
@@ -331,6 +346,9 @@ def run(args):
     codes = scrape(args.source_url)
     state = load_state()
     todo = pending(codes, state)
+    if len(todo) > MAX_CODES_PER_RUN:
+        log(f"{len(todo)} codes pending; only the first {MAX_CODES_PER_RUN} are attempted per run.")
+        todo = dict(list(todo.items())[:MAX_CODES_PER_RUN])
     log(f"Scraped {len(codes)} codes; {len(todo)} new/retryable.")
     for c, i in todo.items():
         log(f"  {c}  {i['reward']}  (expires {i['expires']})")
@@ -353,7 +371,8 @@ def run(args):
                 status, msg = "error", str(e)[:200]
             log(f"{code}: {status} - {msg[:100]!r}")
             if status not in ("rate_limited", "blocked"):
-                state[code] = {**info, "status": status, "message": msg, "redemptions": done,
+                state[code] = {**info, "status": status, "message": clean(msg, 200),
+                               "redemptions": done,
                                "timestamp": datetime.now().isoformat(timespec="seconds")}
                 save_state(state)
             if status in ("rate_limited", "blocked"):
