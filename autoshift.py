@@ -276,7 +276,7 @@ def auto_login(page):
 
 BUTTONS = "#code_results input[type=submit], #code_results button, .redeem_button"
 MAX_REDEEMS_PER_CODE = 10
-CHECK_INTERVAL = 5  # minimum seconds between two code checks (SHiFT throttles bursts)
+CHECK_INTERVAL = 3  # minimum seconds between two code checks (SHiFT throttles bursts)
 _last_check = 0.0
 
 
