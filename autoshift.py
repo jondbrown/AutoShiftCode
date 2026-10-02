@@ -107,6 +107,8 @@ def classify(text):
     t = text.lower()
     if "launch a shift-enabled title" in t or "forbidden" in t:
         return "blocked"
+    if "unexpected error" in t:
+        return "error"  # transient SHiFT-side failure: not recorded as final, retried next run
     if "not a valid" in t or "invalid" in t or "does not exist" in t:
         return "invalid"
     if "already been redeemed" in t or "already redeemed" in t:
@@ -128,7 +130,7 @@ def logged_in(page):
 
 # Result messages SHiFT may show outside an .alert element; the match is the message.
 RESULT_TEXT_RE = (r".*(?:has expired|already been redeemed|already redeemed|not a valid|"
-                  r"launch a SHiFT-enabled title|too many).*")
+                  r"launch a SHiFT-enabled title|too many|unexpected error).*")
 KEYRING_SERVICE = "AutoShiftKey"
 
 
@@ -310,7 +312,7 @@ def redeem_code(page, code, done):
         result = " ".join(page.locator(".alert").all_inner_texts()).strip() or page.locator("body").inner_text()
         st = classify(result)
         log(f"  {code} [{label}]: {st}")
-        if st in ("rate_limited", "blocked", "unknown"):
+        if st in ("rate_limited", "blocked", "unknown", "error"):
             return st, result[:200]
         done[f"{attempt}:{label}"] = st
         if st == "already_redeemed":
