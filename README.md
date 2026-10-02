@@ -11,6 +11,11 @@ Handled codes are recorded in `redeemed.json` so each is only attempted once.
 The code list defaults to the mentalmars.com Borderlands 4 page; use `--source-url <page>`
 to read a different page that lists codes in table rows.
 
+**A browser window opens during runs.** SHiFT rejects headless browsers with a 403
+error, so the tool drives a real Edge window. Scheduled runs start it minimized and
+close it when done; use `--headed` to watch. The PC must be on and logged in at the
+scheduled time.
+
 ## Using the packaged .exe (Windows)
 Download `AutoShiftKey.exe` from the Releases page and double-click it (Windows SmartScreen
 may warn because the exe is unsigned: More info, then Run anyway). Needs Microsoft Edge,
@@ -28,7 +33,7 @@ python -m venv .venv
 .venv\Scripts\python -m playwright install chromium
 .venv\Scripts\python autoshift.py --login     # sign in once in the window, press Enter
 .venv\Scripts\python autoshift.py --dry-run   # list new codes
-.venv\Scripts\python autoshift.py --headed    # first real run, watch it work
+.venv\Scripts\python autoshift.py --headed    # first real run, window fully visible
 ```
 
 ## Schedule daily (run only while logged on, so the saved session works)

@@ -2,7 +2,7 @@
 
   python autoshift.py --login      one-time: sign in manually, session is saved
   python autoshift.py --dry-run    list new codes without redeeming
-  python autoshift.py --run        redeem new codes (headless; use --headed to watch)
+  python autoshift.py --run        redeem new codes (minimized window; --headed shows it)
   python autoshift.py --schedule   register a daily Windows scheduled task
   AutoShiftKey.exe                 (packaged build) opens an interactive menu
 """
@@ -148,19 +148,31 @@ RESULT_TEXT_RE = (r".*(?:has expired|already been redeemed|already redeemed|not 
 KEYRING_SERVICE = "AutoShiftKey"
 
 
-def launch(p, headless):
+def launch(p, minimized=False):
     """Open the persistent browser profile in the system's Microsoft Edge.
 
-    Edge ships with Windows, so nothing has to be downloaded or bundled. From source
-    without Edge, fall back to Playwright's own Chromium.
+    Always a real, windowed browser: SHiFT answers headless browsers with 403 Forbidden.
+    `minimized` minimizes the window after launch so unattended runs stay out of the way
+    (the page keeps working while minimized). Edge ships with Windows, so nothing has to
+    be downloaded or bundled. From source without Edge, fall back to Playwright's Chromium.
     """
     try:
-        return p.chromium.launch_persistent_context(str(PROFILE_DIR), channel="msedge",
-                                                    headless=headless)
+        ctx = p.chromium.launch_persistent_context(str(PROFILE_DIR), channel="msedge",
+                                                   headless=False)
     except Exception:  # noqa: BLE001
         if FROZEN:
             raise
-        return p.chromium.launch_persistent_context(str(PROFILE_DIR), headless=headless)
+        ctx = p.chromium.launch_persistent_context(str(PROFILE_DIR), headless=False)
+    if minimized:
+        try:
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            cdp = ctx.new_cdp_session(page)
+            win = cdp.send("Browser.getWindowForTarget")["windowId"]
+            cdp.send("Browser.setWindowBounds",
+                     {"windowId": win, "bounds": {"windowState": "minimized"}})
+        except Exception:  # noqa: BLE001
+            pass  # cosmetic only: a visible window is fine
+    return ctx
 
 
 def command_line(*flags):
@@ -197,7 +209,7 @@ def set_credentials():
 def manual_login():
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        ctx = launch(p, headless=False)
+        ctx = launch(p)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto("https://shift.gearboxsoftware.com/home")
         input("Sign in in the browser window, then press Enter here to save and exit...")
@@ -366,7 +378,7 @@ def run(args):
 
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        ctx = launch(p, headless=not args.headed)
+        ctx = launch(p, minimized=not args.headed)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         if not logged_in(page) and not auto_login(page):
             log("Not logged in. Choose 'Sign in to SHiFT' in the menu (or run with --login).")
@@ -403,7 +415,8 @@ def main():
     ap.add_argument("--source-url", default=DEFAULT_SOURCE_URL,
                     help="page listing SHiFT codes (default: mentalmars.com Borderlands 4 page)")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--headed", action="store_true")
+    ap.add_argument("--headed", action="store_true",
+                    help="show the browser window normally instead of starting it minimized")
     args = ap.parse_args()
 
     if args.set_credentials:
