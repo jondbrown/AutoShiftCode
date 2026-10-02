@@ -17,14 +17,14 @@ close it when done; use `--headed` to watch. The PC must be on and logged in at 
 scheduled time.
 
 ## Using the packaged .exe (Windows)
-Download `AutoShiftKey.exe` from the Releases page and double-click it (Windows SmartScreen
+Download `AutoShiftCode.exe` from the Releases page and double-click it (Windows SmartScreen
 may warn because the exe is unsigned: More info, then Run anyway). Needs Microsoft Edge,
 which ships with Windows. In the menu: **1** sign in to SHiFT once, **3** preview new codes,
 **2** redeem now, **4** schedule a daily run. Data and logs live in
-`%LOCALAPPDATA%\AutoShiftKey`.
+`%LOCALAPPDATA%\AutoShiftCode`.
 
 Build it yourself with `powershell -ExecutionPolicy Bypass -File build_exe.ps1`
-(output: `dist\AutoShiftKey.exe`).
+(output: `dist\AutoShiftCode.exe`).
 
 ## Setup (from source)
 ```powershell
@@ -40,7 +40,7 @@ python -m venv .venv
 ```powershell
 $a = New-ScheduledTaskAction -Execute powershell.exe -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$PWD\run_daily.ps1`""
 $t = New-ScheduledTaskTrigger -Daily -At 9am
-Register-ScheduledTask -TaskName AutoShiftKey -Action $a -Trigger $t
+Register-ScheduledTask -TaskName AutoShiftCode -Action $a -Trigger $t
 ```
 ## Auto sign-in (optional)
 ```powershell

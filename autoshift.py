@@ -4,7 +4,7 @@
   python autoshift.py --dry-run    list new codes without redeeming
   python autoshift.py --run        redeem new codes (minimized window; --headed shows it)
   python autoshift.py --schedule   register a daily Windows scheduled task
-  AutoShiftKey.exe                 (packaged build) opens an interactive menu
+  AutoShiftCode.exe                 (packaged build) opens an interactive menu
 """
 import argparse
 import json
@@ -21,10 +21,10 @@ from bs4 import BeautifulSoup
 
 FROZEN = getattr(sys, "frozen", False)  # running as a PyInstaller .exe
 # The .exe keeps its data per user; running from source keeps it beside the script.
-ROOT = (Path(os.environ.get("LOCALAPPDATA", Path.home())) / "AutoShiftKey") if FROZEN \
+ROOT = (Path(os.environ.get("LOCALAPPDATA", Path.home())) / "AutoShiftCode") if FROZEN \
     else Path(__file__).parent
 ROOT.mkdir(parents=True, exist_ok=True)
-TASK_NAME = "AutoShiftKey"
+TASK_NAME = "AutoShiftCode"
 STATE_FILE = ROOT / "redeemed.json"
 PROFILE_DIR = ROOT / "browser_profile"
 LOG_DIR = ROOT / "logs"
@@ -145,7 +145,7 @@ def logged_in(page):
 # Result messages SHiFT may show outside an .alert element; the match is the message.
 RESULT_TEXT_RE = (r".*(?:has expired|already been redeemed|already redeemed|not a valid|"
                   r"launch a SHiFT-enabled title|too many|unexpected error).*")
-KEYRING_SERVICE = "AutoShiftKey"
+KEYRING_SERVICE = "AutoShiftCode"
 
 
 def launch(p, minimized=False):
@@ -233,7 +233,7 @@ def menu():
     headings = {"1": "Redeem codes", "4": "Automation (optional)", "q": ""}
     while True:
         print()
-        print("AutoShiftKey - unofficial tool, use at your own risk")
+        print("AutoShiftCode - unofficial tool, use at your own risk")
         for k, (label, _) in actions.items():
             if k in headings:
                 print()
