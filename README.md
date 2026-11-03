@@ -44,8 +44,12 @@ Register-ScheduledTask -TaskName AutoShiftCode -Action $a -Trigger $t
 ```
 ## Auto sign-in (optional)
 ```powershell
-.venv\Scripts\python autoshift.py --set-credentials   # you type email + password; stored in Windows Credential Manager
+.venv\Scripts\python autoshift.py --set-credentials   # you type email + password; stored in the system keyring
 ```
+On a machine with no keyring (e.g. Ubuntu Server), set `AUTOSHIFT_EMAIL` and `AUTOSHIFT_PASSWORD`
+instead (from a `chmod 600` file, never committed); they take priority over the keyring.
+
 If the saved session is lost, the script makes one sign-in attempt with these. Captcha/2FA will defeat it; then use `--login`.
+Test it without redeeming anything: `autoshift.py --check-login --headed`.
 
 Exit code 2 / a "Not logged in" log line means rerun `--login`. Logs are in `logs/`.

@@ -201,9 +201,15 @@ def set_credentials():
     import getpass
     import keyring
     email = input("SHiFT email: ").strip()
-    keyring.set_password(KEYRING_SERVICE, "email", email)
-    keyring.set_password(KEYRING_SERVICE, email, getpass.getpass("SHiFT password: "))
-    print("Saved to Windows Credential Manager.")
+    password = getpass.getpass("SHiFT password: ")
+    try:
+        keyring.set_password(KEYRING_SERVICE, "email", email)
+        keyring.set_password(KEYRING_SERVICE, email, password)
+    except Exception as e:  # noqa: BLE001
+        print(f"Could not store in the keyring ({type(e).__name__}: {e}).\n"
+              "No keyring on this machine? Set AUTOSHIFT_EMAIL and AUTOSHIFT_PASSWORD instead.")
+        return
+    print(f"Saved to the system keyring ({keyring.get_keyring().__class__.__name__}).")
 
 
 def manual_login():
@@ -214,6 +220,25 @@ def manual_login():
         page.goto("https://shift.gearboxsoftware.com/home")
         input("Sign in in the browser window, then press Enter here to save and exit...")
         ctx.close()
+
+
+def check_login(args):
+    """Open the browser, confirm the saved session or try auto_login(), and report.
+
+    Never scrapes or redeems anything, so it is the safe way to test credentials and the
+    login selectors. Returns 0 if signed in, 2 otherwise (same code run() uses).
+    """
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        ctx = launch(p, minimized=not args.headed)
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        if logged_in(page):
+            log("Already signed in (saved session is valid).")
+            ok = True
+        else:
+            ok = auto_login(page)
+        ctx.close()
+    return 0 if ok else 2
 
 
 def menu():
@@ -252,23 +277,41 @@ def menu():
             print("Pick one of the listed options.")
 
 
-def auto_login(page):
-    """Try one automatic sign-in with credentials from Windows Credential Manager.
+def get_credentials():
+    """(email, password) from AUTOSHIFT_EMAIL/AUTOSHIFT_PASSWORD, else the OS keyring.
 
-    Store them once (you type the password yourself):
-      python autoshift.py --set-credentials
-    Fails (returns False) if none are stored, or if SHiFT asks for a captcha/2FA.
-    Only one attempt is made per run, to avoid locking the account.
+    The environment variables suit servers with no keyring backend (load them from a
+    chmod 600 file). Returns (None, None) if neither source has both values.
     """
+    email = os.environ.get("AUTOSHIFT_EMAIL")
+    password = os.environ.get("AUTOSHIFT_PASSWORD")
+    if email and password:
+        return email, password
     try:
         import keyring
         email = keyring.get_password(KEYRING_SERVICE, "email")
         password = keyring.get_password(KEYRING_SERVICE, email) if email else None
     except Exception as e:  # noqa: BLE001
-        log(f"Credential lookup failed: {e}")
-        return False
+        log(f"Keyring lookup failed ({type(e).__name__}); set AUTOSHIFT_EMAIL and "
+            "AUTOSHIFT_PASSWORD instead if this machine has no keyring.")
+        return None, None
+    return email, password
+
+
+def auto_login(page):
+    """Try one automatic sign-in with stored credentials (see get_credentials()).
+
+    Store them once, either in the OS keyring (you type the password yourself):
+      python autoshift.py --set-credentials
+    or in the AUTOSHIFT_EMAIL / AUTOSHIFT_PASSWORD environment variables.
+    Fails (returns False) if none are stored, or if SHiFT asks for a captcha/2FA.
+    Only one attempt is made per run, to avoid locking the account.
+    Test it without touching any codes: python autoshift.py --check-login --headed
+    """
+    email, password = get_credentials()
     if not (email and password):
-        log("No stored credentials. Run: python autoshift.py --set-credentials")
+        log("No stored credentials. Run --set-credentials or set AUTOSHIFT_EMAIL/"
+            "AUTOSHIFT_PASSWORD.")
         return False
     log("Session expired; attempting automatic sign-in.")
     try:
@@ -409,7 +452,10 @@ def main():
     ap.add_argument("--run", action="store_true", help="redeem new codes (what the schedule runs)")
     ap.add_argument("--login", action="store_true", help="sign in manually and save the session")
     ap.add_argument("--set-credentials", action="store_true",
-                    help="store SHiFT email/password in Windows Credential Manager")
+                    help="store SHiFT email/password in the system keyring "
+                         "(or set AUTOSHIFT_EMAIL / AUTOSHIFT_PASSWORD)")
+    ap.add_argument("--check-login", action="store_true",
+                    help="verify the saved session or automatic sign-in; redeems nothing")
     ap.add_argument("--schedule", action="store_true", help="register a daily scheduled task")
     ap.add_argument("--unschedule", action="store_true", help="remove the daily scheduled task")
     ap.add_argument("--source-url", default=DEFAULT_SOURCE_URL,
@@ -425,6 +471,8 @@ def main():
     if args.login:
         manual_login()
         return 0
+    if args.check_login:
+        return check_login(args)
     if args.schedule:
         return schedule_daily()
     if args.unschedule:
